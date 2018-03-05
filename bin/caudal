@@ -1,0 +1,149 @@
+#!/usr/bin/env bash
+
+if test -z "$CAUDAL_BIN"; then
+  export CAUDAL_BIN="$(cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+fi
+
+if test -z "$CAUDAL_HOME"; then
+  export CAUDAL_HOME=$(dirname $CAUDAL_BIN)
+fi
+
+if test -z "$CAUDAL_LIB"; then
+  export CAUDAL_LIB=$CAUDAL_HOME/lib
+fi
+
+if test -z "$CAUDAL_CONFIG"; then
+  export CAUDAL_CONFIG=$CAUDAL_HOME/config
+fi
+
+if test -z "$MININUM_MEMORY"; then
+  export MININUM_MEMORY=512m
+fi
+
+if test -z "$MAXINUM_MEMORY"; then
+  export MAXINUM_MEMORY=1024m
+fi
+
+export CAUDAL_NAME=caudal
+export CAUDAL_STARTER=mx.interware.caudal.core.StarterDSL
+
+start() {
+  # Check for JAVA
+  echo "Verifying JAVA installation ..."
+  if [[ -n "$JAVA_HOME" ]] && [[ -x "$JAVA_HOME/bin/java" ]];  then
+    JAVA_BIN="$JAVA_HOME/bin/java"
+  elif type -p java; then
+    JAVA_BIN=java
+  else
+    echo "No JAVA installation found, please verify. Exiting ..."
+    exit 1
+  fi
+
+  echo "Using JVM installed on : $JAVA_BIN ..."
+
+  if [[ "$JAVA_BIN" ]]; then
+    JAVA_VERSION=$("$JAVA_BIN" -version 2>&1 | awk -F '"' '/version/ {print $2}')
+  fi
+
+
+  if [ -z "$CAUDAL_DAEMON" ] ; then
+    $JAVA_BIN -Xms$MININUM_MEMORY -Xmx$MAXINUM_MEMORY -Duser.timezone=America/Mexico_City -cp "$CAUDAL_LIB/*" $CAUDAL_STARTER -c $CAUDAL_CONFIG
+  else
+    $JAVA_BIN -Xms$MININUM_MEMORY -Xmx$MAXINUM_MEMORY -Duser.timezone=America/Mexico_City -cp "$CAUDAL_LIB/*" $CAUDAL_STARTER -c $CAUDAL_CONFIG 2>&1 &
+
+    retval=$?
+    pid=$!
+
+    echo "Using PID : $pid"
+
+    echo "$pid" > $CAUDAL_HOME/$CAUDAL_NAME.pid
+    [ $retval -eq 0 ] || exit $retval
+    if ! ps -p $pid > /dev/null ; then
+      exit 1
+    fi
+    exit 0
+  fi
+  exit $?
+}
+
+stop() {
+  if [ -f "$CAUDAL_HOME/$CAUDAL_NAME.pid" ] ; then
+    pid=$( cat $CAUDAL_HOME/$CAUDAL_NAME.pid )
+    kill $pid > /dev/null 2>&1   
+    rm $CAUDAL_HOME/$CAUDAL_NAME.pid
+    while ps -fea | grep $pid | grep $CAUDAL_NAME > /dev/null ; do
+      sleep 1      
+    done
+    echo 
+    exit 0
+  else
+    echo "Unable to find $CAUDAL_HOME/$CAUDAL_NAME.pid"
+    exit 1
+  fi
+}
+
+restart() {
+  CAUDAL_DAEMON=true
+  if [ -f "$CAUDAL_HOME/$CAUDAL_NAME.pid" ] ; then
+    pid=$( cat $CAUDAL_HOME/$CAUDAL_NAME.pid )
+    kill $pid > /dev/null 2>&1
+    rm $CAUDAL_HOME/$CAUDAL_NAME.pid
+    while ps -fea | grep $pid | grep $CAUDAL_NAME > /dev/null ; do
+      sleep 1      
+    done
+    echo 
+    start
+  else
+    echo "Unable to find $CAUDAL_HOME/$CAUDAL_NAME.pid"
+    start
+  fi
+}
+
+usage() {
+    printf "Usage: strauz-admin.sh <option> command\n"
+    printf "options:\n"
+    printf "\t-d\tDaemonized option.\n"
+    printf "\t-c\tTakes a custom configuration directory. Overrides CAUDAL_CONFIG environment variable.\n"
+    printf "commands:\n"
+    printf "\tstart\tStarts $CAUDAL_NAME servcie\n"
+    printf "\tstop\tStops $CAUDAL_NAME service using $CAUDAL_HOME/$CAUDAL_NAME.pid\n"
+    printf "\trestart\tStops and Start $CAUDAL_NAME service daemonized\n"
+    printf "example:\n"
+    printf "\tcaudal -c ./config start\n\n"
+    exit 1
+}
+
+while getopts "c:dh" opt; do
+  case $opt in
+    c)
+      CAUDAL_CONFIG=$OPTARG
+      ;;
+    d)
+      CAUDAL_DAEMON=true
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      exit 1
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument." >&2
+      exit 1
+      ;;
+  esac
+done
+
+shift $(expr $OPTIND - 1 )
+case $1 in
+  start)
+    start
+    ;;
+  stop)
+    stop
+    ;;
+  restart)
+    restart
+    ;;
+  *)
+    usage
+    ;;
+esac
